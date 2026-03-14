@@ -1,0 +1,4 @@
+interface:
+  display_name: "TinyFish Web Agent"
+  short_description: "Run TinyFish audits and web extraction workflows"
+  default_prompt: "Use $tinyfish-web-agent to audit this site, map its content, and return a structured report."
