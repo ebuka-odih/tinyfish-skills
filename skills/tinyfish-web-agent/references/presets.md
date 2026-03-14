@@ -126,6 +126,38 @@ Stop conditions:
 Stop once the requested fields have been extracted with source URLs.
 ```
 
+## `knowledge-capture`
+
+```text
+Objective:
+Capture reusable site context that another agent can load later without re-crawling immediately.
+
+Scope:
+Start at {url}. Stay within the target domain and focus on the public sections that explain what the site contains and how it is organized.
+
+Crawl boundaries:
+Inspect the home page, main navigation, docs indexes, pricing, product pages, support hubs, and representative content pages.
+
+Required checks:
+- Build a concise site summary that explains what the site is for.
+- Identify major sections and representative pages.
+- Extract notable entities such as products, plans, categories, collections, tools, or resource types.
+- Preserve evidence URLs for each important section and entity.
+- Return enough structure to create a reusable context file and page inventory.
+
+Evidence:
+Include source URLs for the summary, section list, important pages, and extracted entities.
+
+Output contract:
+Return JSON with `summary`, `sections`, `content_map`, `important_pages`, `entities`, `page_chunks`, and `blockers`.
+
+Failure handling:
+Record inaccessible sections as blockers instead of guessing their contents.
+
+Stop conditions:
+Stop when the site's main structure and key public resources are clear enough to form durable context artifacts.
+```
+
 ## `change-risk-scan`
 
 ```text

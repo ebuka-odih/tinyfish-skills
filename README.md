@@ -38,9 +38,12 @@ export TINYFISH_API_KEY="your-api-key"
 - content awareness and site mapping
 - navigation and information architecture review
 - targeted structured extraction
+- knowledge capture for reusable site context
 - change-risk scans
 
 It gives Codex a repeatable way to run TinyFish with stronger audit prompts, consistent presets, retry handling, and a readable Markdown report by default.
+
+For reusable outputs, the skill can also export context artifacts such as `context.md`, `pages.csv`, `evidence.jsonl`, and `raw.json`.
 
 ## Runtime Requirements
 

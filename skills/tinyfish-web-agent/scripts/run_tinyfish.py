@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 import re
@@ -11,6 +12,7 @@ import sys
 import textwrap
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 from urllib import error, request
 
@@ -165,6 +167,40 @@ PRESETS: dict[str, dict[str, str]] = {
             """
         ),
     },
+    "knowledge-capture": {
+        "objective": "Capture reusable site context and export durable context artifacts.",
+        "goal": textwrap.dedent(
+            """\
+            Objective:
+            Capture reusable site context that another agent can load later without re-crawling immediately.
+
+            Scope:
+            Start at {url}. Stay within the target domain and focus on the public sections that explain what the site contains and how it is organized.
+
+            Crawl boundaries:
+            Inspect the home page, main navigation, docs indexes, pricing, product pages, support hubs, and representative content pages.
+
+            Required checks:
+            - Build a concise site summary that explains what the site is for.
+            - Identify major sections and representative pages.
+            - Extract notable entities such as products, plans, categories, collections, tools, or resource types.
+            - Preserve evidence URLs for each important section and entity.
+            - Return enough structure to create a reusable context file and page inventory.
+
+            Evidence:
+            Include source URLs for the summary, section list, important pages, and extracted entities.
+
+            Output contract:
+            Return JSON with keys summary, sections, content_map, important_pages, entities, page_chunks, blockers.
+
+            Failure handling:
+            Record inaccessible sections as blockers instead of guessing their contents.
+
+            Stop conditions:
+            Stop when the site's main structure and key public resources are clear enough to form durable context artifacts.
+            """
+        ),
+    },
     "change-risk-scan": {
         "objective": "Identify pages where changes would likely create user or business risk.",
         "goal": textwrap.dedent(
@@ -301,6 +337,10 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--output", help="Optional file path for the final output.")
     parser.add_argument(
+        "--export-dir",
+        help="Optional directory for durable context artifacts such as context.md, raw.json, evidence.jsonl, and pages.csv.",
+    )
+    parser.add_argument(
         "--poll",
         action="store_true",
         help="Poll async runs until a terminal status is reached.",
@@ -375,6 +415,15 @@ def main() -> int:
         output = json.dumps(result.raw, indent=2, sort_keys=True, ensure_ascii=True)
     else:
         output = render_report(result, preset=args.preset)
+
+    if args.export_dir:
+        export_artifacts(
+            export_dir=args.export_dir,
+            result=result,
+            preset=args.preset,
+            rendered_output=output,
+            output_format=args.format,
+        )
 
     emit_output(output, args.output)
     if (result.status or "").upper() not in {"COMPLETED", "SUCCESS"}:
@@ -804,6 +853,114 @@ def emit_output(content: str, output_path: str | None) -> None:
         print(content)
 
 
+def export_artifacts(
+    *,
+    export_dir: str,
+    result: RunResult,
+    preset: str,
+    rendered_output: str,
+    output_format: str,
+) -> None:
+    base = Path(export_dir)
+    base.mkdir(parents=True, exist_ok=True)
+
+    report_payload = normalize_result_for_report(result.result)
+    page_rows = collect_page_rows(report_payload)
+    evidence_records = collect_evidence_records(report_payload)
+
+    write_json_file(base / "raw.json", result.raw)
+    write_json_file(
+        base / "summary.json",
+        {
+            "target": result.url,
+            "preset": preset,
+            "mode": result.mode,
+            "status": result.status,
+            "run_id": result.run_id,
+            "live_view_url": result.live_view_url,
+            "browser_profile": result.browser_profile,
+            "proxy_enabled": bool(result.proxy_config),
+            "attempts": [attempt.__dict__ for attempt in result.attempts],
+            "evidence_urls": collect_urls(report_payload, limit=100),
+            "page_count": len(page_rows),
+            "evidence_record_count": len(evidence_records),
+        },
+    )
+    write_text_file(base / "context.md", build_context_markdown(result, preset, report_payload))
+    write_jsonl_file(base / "evidence.jsonl", evidence_records)
+    write_pages_csv(base / "pages.csv", page_rows)
+
+    if output_format == "report":
+        write_text_file(base / "report.md", rendered_output)
+    else:
+        write_text_file(base / "output.json", rendered_output)
+
+
+def write_text_file(path: Path, content: str) -> None:
+    path.write_text(content if content.endswith("\n") else f"{content}\n", encoding="utf-8")
+
+
+def write_json_file(path: Path, payload: Any) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=True) + "\n", encoding="utf-8")
+
+
+def write_jsonl_file(path: Path, rows: list[dict[str, Any]]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, sort_keys=True, ensure_ascii=True) + "\n")
+
+
+def write_pages_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    fieldnames = ["category", "name", "url", "summary"]
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in fieldnames})
+
+
+def build_context_markdown(result: RunResult, preset: str, report_payload: Any) -> str:
+    lines: list[str] = []
+    lines.append("# TinyFish Site Memory")
+    lines.append("")
+    lines.append(f"- Target: {result.url}")
+    lines.append(f"- Preset: {preset}")
+    lines.append(f"- Status: {result.status or 'UNKNOWN'}")
+    if result.run_id:
+        lines.append(f"- Run ID: `{result.run_id}`")
+    lines.append("")
+
+    lines.append("## Summary")
+    lines.append("")
+    key_findings = build_key_findings(report_payload)
+    lines.extend(render_flat_list(key_findings or ["No summary was extracted."]))
+    lines.append("")
+
+    lines.append("## Sections")
+    lines.append("")
+    lines.extend(render_flat_list(collect_content_map(report_payload, limit=15) or ["No sections were extracted."]))
+    lines.append("")
+
+    lines.append("## Important Pages And Entities")
+    lines.append("")
+    lines.extend(render_flat_list(collect_pages_and_entities(report_payload, limit=15) or ["No important pages or entities were extracted."]))
+    lines.append("")
+
+    lines.append("## Evidence URLs")
+    lines.append("")
+    lines.extend(render_flat_list(collect_urls(report_payload, limit=20) or ["No evidence URLs were extracted."]))
+    lines.append("")
+
+    blockers = build_blockers(result, report_payload)
+    if blockers:
+        lines.append("## Blockers")
+        lines.append("")
+        lines.extend(render_flat_list(blockers))
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def render_report(result: RunResult, *, preset: str) -> str:
     report_payload = normalize_result_for_report(result.result)
     lines: list[str] = []
@@ -970,6 +1127,8 @@ def build_next_actions(result: RunResult, report_payload: Any, issues: list[str]
         actions.append("Refine the goal to require evidence URLs for each claim and rerun.")
     else:
         actions.append("Convert confirmed findings into tickets grouped by broken links, navigation issues, and content gaps.")
+    if result.status in {"COMPLETED", "SUCCESS"}:
+        actions.append("If this result should be reused by other agents, rerun with --export-dir to save durable context artifacts.")
     return dedupe_preserve_order(actions)
 
 
@@ -984,6 +1143,115 @@ def normalize_result_for_report(result_payload: Any) -> Any:
                     normalized["summary"] = input_description.strip()
             return normalized
     return result_payload
+
+
+def collect_page_rows(report_payload: Any) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    if not isinstance(report_payload, dict):
+        return rows
+
+    rows.extend(normalize_rows_from_value("sections", report_payload.get("sections")))
+    rows.extend(normalize_rows_from_value("content_map", report_payload.get("content_map")))
+    rows.extend(normalize_rows_from_value("important_pages", report_payload.get("important_pages")))
+    rows.extend(normalize_rows_from_value("entities", report_payload.get("entities")))
+    rows.extend(normalize_rows_from_value("records", report_payload.get("records")))
+    rows.extend(normalize_rows_from_value("page_chunks", report_payload.get("page_chunks")))
+    return dedupe_rows(rows)
+
+
+def normalize_rows_from_value(category: str, value: Any) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    if value is None:
+        return rows
+    if isinstance(value, list):
+        for item in value:
+            row = row_from_item(category, item)
+            if row:
+                rows.append(row)
+    elif isinstance(value, dict):
+        if category == "content_map":
+            for key, item in value.items():
+                if isinstance(item, str) and re.match(r"^https?://", str(key)):
+                    rows.append(
+                        {
+                            "category": category,
+                            "name": key,
+                            "url": key,
+                            "summary": item.strip(),
+                        }
+                    )
+                else:
+                    row = row_from_item(category, item)
+                    if row:
+                        rows.append(row)
+        else:
+            row = row_from_item(category, value)
+            if row:
+                rows.append(row)
+    elif isinstance(value, str):
+        rows.append({"category": category, "name": value.strip(), "url": "", "summary": value.strip()})
+    return rows
+
+
+def row_from_item(category: str, item: Any) -> dict[str, str] | None:
+    if isinstance(item, str):
+        return {"category": category, "name": item.strip(), "url": "", "summary": item.strip()}
+    if not isinstance(item, dict):
+        return None
+
+    url = first_string_value(item, "url", "page_url", "pageUrl", "source_url", "sourceUrl") or ""
+    name = first_string_value(item, "name", "title", "label", "page", "type") or url or category
+    summary = (
+        first_string_value(item, "summary", "description", "content_summary", "contentSummary", "snippet")
+        or ""
+    )
+    return {
+        "category": category,
+        "name": name,
+        "url": url,
+        "summary": summary,
+    }
+
+
+def collect_evidence_records(report_payload: Any) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    for row in collect_page_rows(report_payload):
+        if row.get("url"):
+            records.append(
+                {
+                    "type": row["category"],
+                    "url": row["url"],
+                    "name": row["name"],
+                    "summary": row["summary"],
+                }
+            )
+    for url in collect_urls(report_payload, limit=200):
+        records.append({"type": "url", "url": url, "name": "", "summary": ""})
+    return dedupe_evidence_records(records)
+
+
+def dedupe_rows(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    seen: set[tuple[str, str, str]] = set()
+    output: list[dict[str, str]] = []
+    for row in rows:
+        key = (row.get("category", ""), row.get("url", ""), row.get("name", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(row)
+    return output
+
+
+def dedupe_evidence_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str, str]] = set()
+    output: list[dict[str, Any]] = []
+    for record in records:
+        key = (str(record.get("type", "")), str(record.get("url", "")), str(record.get("name", "")))
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(record)
+    return output
 
 
 def summarize_value(key: str, value: Any, *, limit: int) -> list[str]:

@@ -38,6 +38,11 @@ scripts/run_tinyfish.py \
   --preset navigation-and-structure \
   --mode async \
   --poll
+
+scripts/run_tinyfish.py \
+  --url https://docs.example.com \
+  --preset knowledge-capture \
+  --export-dir /tmp/docs-context
 ```
 
 Use `--dry-run` while shaping goals or verifying payloads:
@@ -66,6 +71,10 @@ Use for information architecture reviews, menu validation, user-path checks, orp
 ### `targeted-extraction`
 
 Use for extracting specific fields from a known page or small page set such as pricing tables, job listings, policies, changelog items, or structured catalog rows.
+
+### `knowledge-capture`
+
+Use for turning a crawl into reusable context artifacts such as a compact site-memory document, a page inventory, and evidence records that another agent can load later without re-crawling immediately.
 
 Additional presets live in [presets.md](./references/presets.md):
 
@@ -153,6 +162,14 @@ Default to Markdown report output. The runner organizes the result into:
 - recommended next actions
 
 Use `--format json` only when another tool or script needs the raw TinyFish payload.
+
+Use `--export-dir` when the goal is durable context capture rather than a one-off answer. The runner will write context artifacts such as:
+
+- `context.md`
+- `raw.json`
+- `summary.json`
+- `evidence.jsonl`
+- `pages.csv`
 
 ## Operator Notes
 
