@@ -2,6 +2,8 @@
 
 Installable Codex skills for TinyFish workflows.
 
+TinyFish website: <https://www.tinyfish.ai/>
+
 ## Included Skills
 
 - `tinyfish-web-agent`
@@ -18,6 +20,16 @@ python3 ~/.codex/skills/.system/skill-installer/scripts/install-skill-from-githu
 
 Restart Codex after installation.
 
+## TinyFish Setup
+
+1. Sign up at <https://www.tinyfish.ai/>.
+2. Obtain your TinyFish API key from your TinyFish account.
+3. Export it before using the skill:
+
+```bash
+export TINYFISH_API_KEY="your-api-key"
+```
+
 ## Skill Purpose
 
 `tinyfish-web-agent` runs TinyFish against public websites and docs sites for tasks such as:
@@ -27,6 +39,8 @@ Restart Codex after installation.
 - navigation and information architecture review
 - targeted structured extraction
 - change-risk scans
+
+It gives Codex a repeatable way to run TinyFish with stronger audit prompts, consistent presets, retry handling, and a readable Markdown report by default.
 
 ## Runtime Requirements
 
